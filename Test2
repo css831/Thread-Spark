@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""
+Frontier Military Verification Bot - Pure Python CLI Demo
+Hackathon Proof of Concept
+"""
+
+import cv2
+import pytesseract
+from PIL import Image
+import numpy as np
+from fuzzywuzzy import fuzz
+import re
+from datetime import datetime
+import time
+import sys
+import os
+from typing import Dict, List, Tuple, Optional
+import json
+
+
+class Colors:
+    """Terminal colors for pretty output"""
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+class MilitaryVerificationBot:
+    """
+    AI-powered military document verification system
+    Zero-storage, privacy-first architecture
+    """
+    
+    def __init__(self, confidence_threshold: int = 85):
+        self.confidence_threshold = confidence_threshold
+        self.supported_formats = ['jpg', 'jpeg', 'png', 'bmp', 'tiff']
+        self.verification_log = []
+        
+    def print_banner(self):
+        """Display application banner"""
+        banner = f"""
+{Colors.HEADER}{'='*70}
+🎖️  FRONTIER MILITARY VERIFICATION BOT
+{'='*70}{Colors.ENDC}
+{Colors.OKCYAN}Instant Verification | Privacy-First | Zero Storage{Colors.ENDC}
+        """
+        print(banner)
+    
+    def print_section(self, title: str):
+        """Print section header"""
+        print(f"\n{Colors.BOLD}{Colors.OKBLUE}{'─'*70}{Colors.ENDC}")
+        print(f"{Colors.BOLD}{Colors.OKBLUE}▶ {title}{Colors.ENDC}")
+        print(f"{Colors.BOLD}{Colors.OKBLUE}{'─'*70}{Colors.ENDC}\n")
+    
+    def preprocess_image(self, image_path: str) -> np.ndarray:
+        """
+        Enhance image quality for better OCR accuracy
+        """
+        print("  📸 Loading image...")
+        img = cv2.imread(image_path)
+        
+        if img is None:
+            raise ValueError(f"Could not load image: {image_path}")
+        
+        print("  🔧 Preprocessing image...")
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Apply thresholding
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        
+        # Denoise
+        denoised = cv2.fastNlMeansDenoising(thresh)
+        
+        # Increase contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(denoised)
+        
+        print(f"  ✅ Image preprocessed successfully")
+        
+        return enhanced
+    
+    def extract_text_from_image(self, image_path: str) -> str:
+        """
+        Extract text using OCR
+        """
+        print("  🔍 Extracting text with OCR...")
+        
+        # Preprocess
+        processed_img = self.preprocess_image(image_path)
+        
+        # OCR with custom config for better accuracy
+        custom_config = r'--oem 3 --psm 6'
+        text = pytesseract.image_to_string(processed_img, config=custom_config)
+        
+        # Clean up
+        del processed_img
+        
+        if text.strip():
+            print(f"  ✅ Extracted {len(text)} characters")
+        else:
+            print(f"  {Colors.WARNING}⚠️  No text extracted{Colors.ENDC}")
+        
+        return text
+    
+    def classify_document_type(self, text: str) -> str:
+        """
+        Identify military document type
+        """
+        text_lower = text.lower()
+        
+        document_types = {
+            'CAC (Common Access Card)': [
+                'common access card', 'cac', 'department of defense',
+                'dod id', 'armed forces', 'active duty'
+            ],
+            'DD214 (Discharge Papers)': [
+                'dd214', 'dd 214', 'certificate of release',
+                'discharge', 'separation', 'honorable discharge'
+            ],
+            'DD215 (Correction to DD214)': [
+                'dd215', 'dd 215', 'correction to dd214'
+            ],
+            'VHIC (Veteran Health ID)': [
+                'veteran health', 'vhic', 'veterans health identification',
+                'va health'
+            ],
+            'Retiree ID Card': [
+                'uniformed services', 'retiree', 'retired',
+                'retirement', 'usnr', 'usaf retired'
+            ],
+            'VA Card': [
+                'veterans affairs', 'department of veterans affairs',
+                'va identification'
+            ],
+            'Military Orders': [
+                'orders', 'reporting date', 'duty station',
+                'permanent change of station', 'pcs'
+            ],
+            'NGB Form 22': [
+                'ngb 22', 'ngb form 22', 'national guard',
+                'report of separation'
+            ],
+            'LES (Leave and Earnings)': [
+                'leave and earnings statement', 'les', 'pay date',
+                'earnings statement'
+            ]
+        }
+        
+        for doc_type, keywords in document_types.items():
+            if any(keyword in text_lower for keyword in keywords):
+                return doc_type
+        
+        return 'UNKNOWN'
+    
+    def extract_names_from_document(self, text: str, doc_type: str) -> List[str]:
+        """
+        Extract potential names from document text
+        """
+        lines = text.split('\n')
+        potential_names = []
+        
+        # Common patterns for name extraction
+        name_patterns = [
+            r'NAME[:\s]+([A-Z][A-Z\s]+)',
+            r'LAST[,\s]+FIRST[,\s]+(?:MIDDLE)?[:\s]+([A-Z\s,]+)',
+            r'FULL NAME[:\s]+([A-Z][A-Z\s]+)',
+            r'([A-Z]+)[,\s]+([A-Z]+)[,\s]*([A-Z]*)',
+        ]
+        
+        for line in lines:
+            # Skip lines that are too short or too long
+            if len(line) < 5 or len(line) > 100:
+                continue
+            
+            for pattern in name_patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    name = match.group(1).strip()
+                    if len(name.split()) >= 2:  # Must have at least first and last
+                        potential_names.append(name)
+        
+        # Also look for standalone capital letter sequences (likely names)
+        for line in lines:
+            words = line.split()
+            if 2 <= len(words) <= 4:  # Names typically 2-4 words
+                if all(w[0].isupper() for w in words if len(w) > 1):
+                    potential_names.append(line.strip())
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_names = []
+        for name in potential_names:
+            if name not in seen:
+                seen.add(name)
+                unique_names.append(name)
+        
+        return unique_names
+    
+    def extract_expiration_date(self, text: str) -> Optional[datetime]:
+        """
+        Find and parse expiration date from document
+        """
+        date_patterns = [
+            r'EXP[IRATION]*[:\s]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            r'EXPIRES[:\s]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            r'VALID[:\s]+(?:THROUGH|UNTIL|THRU)[:\s]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            r'EXPIRATION DATE[:\s]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                date_str = match.group(1)
+                return self.parse_date(date_str)
+        
+        return None
+    
+    def parse_date(self, date_str: str) -> Optional[datetime]:
+        """Parse various date formats"""
+        formats = [
+            '%m/%d/%Y', '%m-%d-%Y', '%m/%d/%y', '%m-%d-%y',
+            '%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d', '%Y/%m/%d',
+            '%b %d %Y', '%B %d %Y', '%d %b %Y', '%d %B %Y'
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        
+        return None
+    
+    def is_date_valid(self, expiration_date: Optional[datetime]) -> bool:
+        """Check if document is still valid"""
+        if expiration_date is None:
+            return True  # Some documents don't expire (e.g., DD214)
+        
+        return expiration_date > datetime.now()
+    
+    def normalize_name(self, name: str) -> str:
+        """
+        Clean and normalize names for comparison
+        """
+        # Convert to uppercase and remove extra whitespace
+        name = ' '.join(name.upper().split())
+        
+        # Remove common suffixes
+        suffixes = ['JR', 'JR.', 'SR', 'SR.', 'II', 'III', 'IV', 'V']
+        for suffix in suffixes:
+            name = name.replace(f' {suffix}', '').replace(f',{suffix}', '')
+        
+        # Remove punctuation
+        name = re.sub(r'[^\w\s]', '', name)
+        
+        return name.strip()
+    
+    def match_names(self, account_name: str, document_names: List[str]) -> Dict:
+        """
+        Fuzzy match account holder name with document names
+        """
+        account_name_clean = self.normalize_name(account_name)
+        
+        best_match_score = 0
+        best_match_name = None
+        
+        for doc_name in document_names:
+            doc_name_clean = self.normalize_name(doc_name)
+            
+            # Use multiple fuzzy matching algorithms
+            ratio = fuzz.ratio(account_name_clean, doc_name_clean)
+            partial_ratio = fuzz.partial_ratio(account_name_clean, doc_name_clean)
+            token_sort = fuzz.token_sort_ratio(account_name_clean, doc_name_clean)
+            token_set = fuzz.token_set_ratio(account_name_clean, doc_name_clean)
+            
+            # Take the highest score
+            score = max(ratio, partial_ratio, token_sort, token_set)
+            
+            if score > best_match_score:
+                best_match_score = score
+                best_match_name = doc_name
+        
+        return {
+            'match_score': best_match_score,
+            'matched_name': best_match_name,
+            'is_match': best_match_score >= self.confidence_threshold
+        }
+    
+    def display_progress_bar(self, current: int, total: int, width: int = 50):
+        """Display a progress bar"""
+        progress = current / total
+        filled = int(width * progress)
+        bar = '█' * filled + '░' * (width - filled)
+        percent = int(progress * 100)
+        print(f"\r  Progress: |{bar}| {percent}%", end='', flush=True)
+    
+    def verify_document(self, image_path: str, account_holder_name: str) -> Dict:
+        """
+        Main verification logic
+        """
+        result = {
+            'verified': False,
+            'confidence': 0,
+            'document_type': None,
+            'expiration_valid': False,
+            'name_match': None,
+            'reason': None,
+            'timestamp': datetime.now().isoformat(),
+            'processing_time': 0
+        }
+        
+        start_time = time.time()
+        
+        try:
+            # Validate file exists
+            if not os.path.exists(image_path):
+                result['reason'] = f'File not found: {image_path}'
+                return result
+            
+            # Validate file format
+            file_ext = image_path.rsplit('.', 1)[-1].lower()
+            if file_ext not in self.supported_formats:
+                result['reason'] = f'Unsupported format: {file_ext}'
+                return result
+            
+            # Step 1: Extract text (40% of progress)
+            self.print_section("Step 1/4: OCR Text Extraction")
+            text = self.extract_text_from_image(image_path)
+            
+            if not text or len(text.strip()) < 10:
+                result['reason'] = 'Could not extract readable text from document'
+                return result
+            
+            # Step 2: Classify document (60% of progress)
+            self.print_section("Step 2/4: Document Classification")
+            doc_type = self.classify_document_type(text)
+            result['document_type'] = doc_type
+            
+            print(f"  📋 Detected document type: {Colors.BOLD}{doc_type}{Colors.ENDC}")
+            
+            if doc_type == 'UNKNOWN':
+                result['reason'] = 'Document type not recognized as valid military ID'
+                return result
+            
+            # Step 3: Extract and match names (80% of progress)
+            self.print_section("Step 3/4: Name Verification")
+            document_names = self.extract_names_from_document(text, doc_type)
+            
+            print(f"  👤 Found {len(document_names)} potential name(s) in document")
+            for i, name in enumerate(document_names[:3], 1):  # Show first 3
+                print(f"     {i}. {name}")
+            
+            if not document_names:
+                result['reason'] = 'Could not extract name from document'
+                return result
+            
+            # Perform fuzzy matching
+            print(f"\n  🔄 Matching against account holder: {Colors.BOLD}{account_holder_name}{Colors.ENDC}")
+            name_match = self.match_names(account_holder_name, document_names)
+            result['name_match'] = {
+                'score': name_match['match_score'],
+                'is_match': name_match['is_match']
+            }
+            
+            print(f"  📊 Best match score: {Colors.BOLD}{name_match['match_score']}%{Colors.ENDC}")
+            
+            if not name_match['is_match']:
+                result['reason'] = f"Name verification unsuccessful (confidence: {name_match['match_score']}%)"
+                result['confidence'] = name_match['match_score']
+                return result
+            
+            # Step 4: Check expiration (100% of progress)
+            self.print_section("Step 4/4: Validity Check")
+            expiration_date = self.extract_expiration_date(text)
+            
+            if expiration_date:
+                is_valid = self.is_date_valid(expiration_date)
+                result['expiration_valid'] = is_valid
+                
+                exp_str = expiration_date.strftime('%m/%d/%Y')
+                
+                if is_valid:
+                    print(f"  📅 Expiration date: {exp_str} {Colors.OKGREEN}(Valid){Colors.ENDC}")
+                else:
+                    print(f"  📅 Expiration date: {exp_str} {Colors.FAIL}(Expired){Colors.ENDC}")
+                    result['reason'] = f'Document expired on {exp_str}'
+                    return result
+            else:
+                print(f"  📅 No expiration date found (document may not expire)")
+                result['expiration_valid'] = True
+            
+            # Success!
+            result['verified'] = True
+            result['confidence'] = name_match['match_score']
+            result['reason'] = 'Successfully verified military status'
+            
+        except Exception as e:
+            result['reason'] = f'Processing error: {str(e)}'
+        
+        finally:
+            result['processing_time'] = round(time.time() - start_time, 2)
+        
+        return result
+    
+    def display_result(self, result: Dict, account_holder: str):
+        """
+        Display verification result with formatting
+        """
+        print("\n" + "="*70)
+        
+        if result['verified']:
+            # Success
+            print(f"{Colors.OKGREEN}{Colors.BOLD}")
+            print("  ✅ VERIFICATION SUCCESSFUL")
+            print(f"{Colors.ENDC}")
+            
+            print(f"\n  🎖️  Thank you for your service!")
+            print(f"\n  📋 Document Type: {Colors.BOLD}{result['document_type']}{Colors.ENDC}")
+            print(f"  👤 Account Holder: {Colors.BOLD}{account_holder}{Colors.ENDC}")
+            print(f"  📊 Confidence Score: {Colors.BOLD}{result['confidence']}%{Colors.ENDC}")
+            print(f"  ⏱️  Processing Time: {Colors.BOLD}{result['processing_time']}s{Colors.ENDC}")
+            
+            print(f"\n{Colors.OKCYAN}{'─'*70}{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}{Colors.BOLD}  💰 YOUR MILITARY DISCOUNT{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}{'─'*70}{Colors.ENDC}")
+            print(f"  Monthly Discount: {Colors.BOLD}{Colors.OKGREEN}$10.00{Colors.ENDC}")
+            print(f"  Annual Savings:   {Colors.BOLD}{Colors.OKGREEN}$120.00{Colors.ENDC}")
+            print(f"  Effective Date:   {Colors.BOLD}{datetime.now().strftime('%m/%d/%Y')}{Colors.ENDC}")
+            
+            print(f"\n{Colors.OKCYAN}  🔒 Privacy Notice:{Colors.ENDC}")
+            print(f"  Your document was processed and immediately
