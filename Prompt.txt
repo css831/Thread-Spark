@@ -1,0 +1,7 @@
+So lets set the stage. We are in a hackathon, and want to build a proof of concept. We are want to build a verification bot or agent to enable customers to prove they are in a certain group.
+ For the first iteration, lets try and verify if these customers were ever in the military both current and former.
+We are building this verification bot for existing customers, for a telecommunication company “Frontier communications”  Our vision for this bot would have an entry point from within the MyFrontierApp.  I will provide an image of what a logged in customer would see from the app. 
+
+Customers would already be logged into their frontier account, and then enter a portal to upload documents and or other forms of identification such as military ID cards. We would like the bot to scan and verify the customers names match, if an expiration date is on the ID or document, we would want the agent to verify it is still valid.
+
+I have included a flow chart to help understand what it is that we want built. If the bot is unable to verify the documents and cant prove a customer was in the military, we would want the bot to give the customer a contact card to reach a customer service representative for help. 
